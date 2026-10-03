@@ -389,11 +389,24 @@ class MieleLanCoordinator(DataUpdateCoordinator[MieleLanData]):
     async def _maybe_refresh_device_context(self) -> None:
         """Refresh GLOBAL_DeviceContext (DOP2 2/1585) for laundry-family devices.
 
-        Carries TwinDos fill-level and dosage, plus Wash2DryState. Only
-        available at HAN tier on devices whose firmware routes DOP2 unit 2
-        (e.g. WTW870). On devices that don't expose it (TWC660WP, EK057 FW
-        08.32) the first 404/403 latches the unsupported flag so we never
-        retry.
+        Carries TwinDos fill-level and dosage plus Wash2DryState (laundry),
+        and the dishwasher's consumables: AutoDos PowerDisk cartridge,
+        salt %, and rinse aid % (fields 8/9 of
+        GLOBAL_DeviceAttributesDWTDWM — verified live on a G7655 against
+        the values the Miele cloud API reports for the same machine).
+
+        Only available at HAN tier on devices whose firmware routes DOP2
+        unit 2. Unsupportedness and sleep are two different things here:
+
+        - A 403/404 is a genuine "this firmware doesn't expose this leaf"
+          signal → latch off, never retry.
+        - A 500 is usually the XKM being asleep (it answers 500 with an
+          empty body to every DOP2 read in that state — observed on the
+          G7655). Latching on it would permanently hide consumable
+          sensors on ANY appliance that happened to be in deep standby
+          during HA startup, so 5xx are transient: one wake-and-retry
+          round per poll cycle (same pattern as set_power / issue #54),
+          and no latch.
         """
         if self._device_context_unsupported:
             return
@@ -407,15 +420,40 @@ class MieleLanCoordinator(DataUpdateCoordinator[MieleLanData]):
             st, body = await self.client.raw._request_bytes(
                 "GET",
                 f"/Devices/{self.fab}/DOP2/2/1585?idx1=0&idx2=0",
-                allowed_status=(200, 403, 404),
+                allowed_status=(200, 403, 404, 500),
             )
+            if st == 500:
+                # Sleeping XKM — wake it, give it the same ~3s the app
+                # allows, and retry once before the next poll cycle.
+                try:
+                    await self.client.wake()
+                except Exception as err:  # noqa: BLE001
+                    _LOGGER.debug(
+                        "[%s] DOP2 2/1585 got 500 (asleep), wake failed: %s",
+                        self.fab, err,
+                    )
+                    return
+                await asyncio.sleep(3)
+                st, body = await self.client.raw._request_bytes(
+                    "GET",
+                    f"/Devices/{self.fab}/DOP2/2/1585?idx1=0&idx2=0",
+                    allowed_status=(200, 403, 404, 500),
+                )
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("[%s] DOP2 2/1585 fetch failed: %s", self.fab, err)
             return
-        if st != 200:
+        if st in (403, 404):
             self._device_context_unsupported = True
             _LOGGER.debug(
                 "[%s] DOP2 2/1585 returned %d — disabling device-context reads on this device",
+                self.fab, st,
+            )
+            return
+        if st != 200:
+            # Still 500 after the wake-and-retry — leave the latch off so a
+            # later cycle (XKM now awake) recovers without user action.
+            _LOGGER.debug(
+                "[%s] DOP2 2/1585 returned %d even after wake — retrying next cycle",
                 self.fab, st,
             )
             return
