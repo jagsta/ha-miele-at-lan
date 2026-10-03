@@ -1048,6 +1048,18 @@
           "no_program_available": "No program available"
         }
       },
+      "autodos_level": {
+        "name": "AutoDos PowerDisk fill level"
+      },
+      "autodos_dosage": {
+        "name": "AutoDos PowerDisk remaining detergent"
+      },
+      "salt_level": {
+        "name": "Dishwasher salt fill level"
+      },
+      "rinse_aid_level": {
+        "name": "Rinse aid fill level"
+      },
       "push_mode": {
         "name": "Push status",
         "state": {

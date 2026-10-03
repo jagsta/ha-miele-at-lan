@@ -1048,6 +1048,18 @@
           "no_program_available": "Kein Programm verfügbar"
         }
       },
+      "autodos_level": {
+        "name": "AutoDos PowerDisk Füllstand"
+      },
+      "autodos_dosage": {
+        "name": "AutoDos PowerDisk Spülmittelrest"
+      },
+      "salt_level": {
+        "name": "Geschirrspüler Salzfüllstand"
+      },
+      "rinse_aid_level": {
+        "name": "Klarspüler Füllstand"
+      },
       "push_mode": {
         "name": "Push-Status",
         "state": {

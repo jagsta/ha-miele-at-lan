@@ -26,6 +26,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .api import MieleLanClient
 from .const import (
     DOMAIN,
+    DISHWASHER_FAMILY,
     HOB_FAMILY,
     LAUNDRY_FAMILY,
     OVEN_FAMILY,
@@ -396,7 +397,7 @@ class MieleLanCoordinator(DataUpdateCoordinator[MieleLanData]):
         """
         if self._device_context_unsupported:
             return
-        if self.device_type not in LAUNDRY_FAMILY:
+        if self.device_type not in (*LAUNDRY_FAMILY, *DISHWASHER_FAMILY):
             return
         now = time.monotonic()
         if now - self._device_context_last_fetch < DEVICE_CONTEXT_REFRESH_INTERVAL:
