@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
@@ -64,11 +66,21 @@ def _make_coordinator(statuses: list[int], device_type: MieleAppliance) -> Any:
     coord._data.ident = {"device_type": int(device_type)}
     coord._device_context_unsupported = False
     coord._device_context_last_fetch = 0.0
+    coord._device_context_miss_cycles = 0
     return coord
 
 
 def _reset_throttle(coord: Any) -> None:
     coord._device_context_last_fetch = 0.0
+
+
+@pytest.fixture(autouse=True)
+def _no_real_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The wake path sleeps ~3s against a live XKM; tests must not."""
+    async def _instant(_delay: float) -> None:  # pragma: no cover - trivial
+        return None
+
+    monkeypatch.setattr(coordinator_mod.asyncio, "sleep", _instant)
 
 
 async def _run(coord: Any) -> None:
@@ -107,7 +119,87 @@ def test_still_500_after_wake_stays_transient() -> None:
     coord.client.set_statuses([500, 500])
     asyncio.run(_run(coord))
     assert coord._device_context_unsupported is False
+    assert coord._device_context_miss_cycles == 1
     assert coord.client.raw.calls == 2
+
+
+def test_miss_cycles_latch_after_three_without_200() -> None:
+    """PR-review bound: 3 consecutive cycles ending without a 200 latch the leaf."""
+    # Cycle 1 and 2: 500 -> wake -> still 500.
+    coord = _make_coordinator([500], MieleAppliance.DISHWASHER)
+    coord.client.set_statuses([500, 500])
+    asyncio.run(_run(coord))
+    coord.client.set_statuses([500, 500])
+    _reset_throttle(coord)
+    asyncio.run(_run(coord))
+    assert coord._device_context_unsupported is False
+    coord.client.set_statuses([500, 500])
+    _reset_throttle(coord)
+    asyncio.run(_run(coord))
+    assert coord._device_context_unsupported is True
+
+
+def test_first_and_second_miss_never_latch() -> None:
+    coord = _make_coordinator([500], MieleAppliance.DISHWASHER)
+    coord.client.set_statuses([500, 500])
+    asyncio.run(_run(coord))
+    assert coord._device_context_unsupported is False
+    coord.client.set_statuses([500, 500])
+    _reset_throttle(coord)
+    asyncio.run(_run(coord))
+    assert coord._device_context_unsupported is False
+
+
+def test_200_resets_the_miss_counter() -> None:
+    coord = _make_coordinator([500], MieleAppliance.DISHWASHER)
+    coord.client.set_statuses([500, 500])
+    asyncio.run(_run(coord))  # miss 1
+    coord.client.set_statuses([500, 500])
+    _reset_throttle(coord)
+    asyncio.run(_run(coord))  # miss 2
+    assert coord._device_context_miss_cycles == 2
+    # A 200 on one cycle clears the streak entirely…
+    coord.client.set_statuses([200])
+    _reset_throttle(coord)
+    asyncio.run(_run(coord))
+    assert coord._device_context_miss_cycles == 0
+    assert coord._device_context_unsupported is False
+    # …so two further misses (not one) are needed to latch.
+    coord.client.set_statuses([500, 500])
+    _reset_throttle(coord)
+    asyncio.run(_run(coord))
+    coord.client.set_statuses([500, 500])
+    _reset_throttle(coord)
+    asyncio.run(_run(coord))
+    assert coord._device_context_unsupported is False
+    coord.client.set_statuses([500, 500])
+    _reset_throttle(coord)
+    asyncio.run(_run(coord))
+    assert coord._device_context_unsupported is True
+
+
+def test_wake_failure_counts_as_a_miss() -> None:
+    coord = _make_coordinator([500], MieleAppliance.DISHWASHER)
+    coord.client.wake = AsyncMock(side_effect=RuntimeError("no route"))
+    coord.client.set_statuses([500])
+    asyncio.run(_run(coord))
+    assert coord._device_context_miss_cycles == 1
+    assert coord._device_context_unsupported is False
+
+
+def test_fetch_failure_counts_as_a_miss() -> None:
+    """A timeout on the first read is a cycle that ended without a 200."""
+
+    class _BoomRaw(_StubRaw):
+        async def _request_bytes(self, method: str, resource: str, **kwargs: Any):
+            raise TimeoutError()
+
+    coord = _make_coordinator([500], MieleAppliance.DISHWASHER)
+    coord.client.raw = _BoomRaw([])  # type: ignore[assignment]
+    coord.client.raw.calls = 0
+    asyncio.run(_run(coord))
+    assert coord._device_context_miss_cycles == 1
+    assert coord._device_context_unsupported is False
 
 
 def test_non_dw_family_never_polls() -> None:
