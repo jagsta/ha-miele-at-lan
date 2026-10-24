@@ -274,10 +274,9 @@ def parse_global_device_context(payload: bytes) -> dict[str, Any]:
         "device_attributes_dwtdwm": device_attributes,
         "dos_containers": dos_containers,
         # DW-and-TDW-M (dishwasher family) consumable levels, from
-        # GLOBAL_DeviceAttributesDWTDWM fields 8/9. Verified live on a
-        # G7655 (EK037, protocolVersion 4) against the values the official
-        # Miele cloud API reports for the same machine — salt 77 % and
-        # rinse aid 89 % matched exactly (issue #15).
+        # GLOBAL_DeviceAttributesDWTDWM fields 8/9 — see the verification
+        # note in sensor.py::_consumable_percent (verified live on a
+        # G7655 against the Miele cloud API, issue #15).
         "salt_percent": (
             device_attributes.get(8, (None, None))[1]
             if device_attributes else None

@@ -846,7 +846,7 @@ def _consumable_percent(ctx: dict[str, Any], key: str) -> Any:
     """Dishwasher salt / rinse-aid level from GLOBAL_DeviceAttributesDWTDWM.
 
     0 is a meaningful value ("empty — refill"); None means the field is
-    absent (not a dishwater or leaf not exposed). Verified live on a
+    absent (not a dishwasher, or leaf not exposed). Verified live on a
     G7655 (issue #15): field 8 = salt 77, field 9 = rinse aid 89 — both
     matching the official cloud API for the same machine.
     """
@@ -911,7 +911,7 @@ DEVICE_CONTEXT_SENSORS: tuple[MieleLanDeviceContextSensorDef, ...] = (
             value_fn=lambda ctx: ctx.get("wash2dry_state"),
         ),
     ),
-    # --- Dishwasher consumables (G7-series w/ AutoDos; verified on G7655) ---
+    # --- Dishwasher consumables (G7-series w/ AutoDos) ---
     # The AutoDos PowerDisk cartridge occupies dos_containers[0] on dishwashers
     # (on laundry machines those slots are TwinDos bottles).
     MieleLanDeviceContextSensorDef(
@@ -923,17 +923,6 @@ DEVICE_CONTEXT_SENSORS: tuple[MieleLanDeviceContextSensorDef, ...] = (
             entity_category=EntityCategory.DIAGNOSTIC,
             container_index=0,
             value_fn=lambda ctx: _dos_container_value(ctx, 0, "filling_level_pct"),
-        ),
-    ),
-    MieleLanDeviceContextSensorDef(
-        types=DISHWASHER_FAMILY,
-        description=MieleLanDeviceContextSensorDescription(
-            key="autodos_dosage",
-            translation_key="autodos_dosage",
-            native_unit_of_measurement="mL",
-            entity_category=EntityCategory.DIAGNOSTIC,
-            container_index=0,
-            value_fn=lambda ctx: _dos_container_value(ctx, 0, "current_dosage_ml"),
         ),
     ),
     MieleLanDeviceContextSensorDef(
