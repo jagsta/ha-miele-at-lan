@@ -22,8 +22,10 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     REVOLUTIONS_PER_MINUTE,
     EntityCategory,
+    UnitOfEnergy,
     UnitOfTemperature,
     UnitOfTime,
+    UnitOfVolume,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -842,6 +844,11 @@ def _dos_container_value(
     return c.get(key)
 
 
+def _dwtdwm_lifetime(ctx: dict[str, Any], key: str) -> Any:
+    """Lifetime eco-feedback total; None when the appliance doesn't publish it."""
+    return ctx.get(key)
+
+
 def _consumable_percent(ctx: dict[str, Any], key: str) -> Any:
     """Dishwasher salt / rinse-aid level from GLOBAL_DeviceAttributesDWTDWM.
 
@@ -945,6 +952,32 @@ DEVICE_CONTEXT_SENSORS: tuple[MieleLanDeviceContextSensorDef, ...] = (
             entity_category=EntityCategory.DIAGNOSTIC,
             container_index=None,
             value_fn=lambda ctx: _consumable_percent(ctx, "rinse_aid_percent"),
+        ),
+    ),
+    MieleLanDeviceContextSensorDef(
+        types=DISHWASHER_FAMILY,
+        description=MieleLanDeviceContextSensorDescription(
+            key="lifetime_energy",
+            translation_key="lifetime_energy",
+            native_unit_of_measurement=UnitOfEnergy.WATT_HOUR,
+            device_class=SensorDeviceClass.ENERGY,
+            state_class=SensorStateClass.TOTAL_INCREASING,
+            entity_category=EntityCategory.DIAGNOSTIC,
+            container_index=None,
+            value_fn=lambda ctx: _dwtdwm_lifetime(ctx, "lifetime_energy_wh"),
+        ),
+    ),
+    MieleLanDeviceContextSensorDef(
+        types=DISHWASHER_FAMILY,
+        description=MieleLanDeviceContextSensorDescription(
+            key="lifetime_water",
+            translation_key="lifetime_water",
+            native_unit_of_measurement=UnitOfVolume.LITERS,
+            device_class=SensorDeviceClass.VOLUME,
+            state_class=SensorStateClass.TOTAL_INCREASING,
+            entity_category=EntityCategory.DIAGNOSTIC,
+            container_index=None,
+            value_fn=lambda ctx: _dwtdwm_lifetime(ctx, "lifetime_water_l"),
         ),
     ),
 )
