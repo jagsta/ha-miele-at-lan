@@ -71,12 +71,11 @@ def _resolve_fab(hass: HomeAssistant, device_id: str) -> str:
     return fab
 
 
-def _resolve_coordinator(hass: HomeAssistant, device_id: str, fab: str) -> Any:
-    device_entry = dr.async_get(hass).async_get(device_id)
-    for entry_id in device_entry.config_entries:
-        bundle = hass.data.get(DOMAIN, {}).get(entry_id)
-        if not bundle:
-            continue
+def _resolve_coordinator(hass: HomeAssistant, fab: str) -> Any:
+    # Looked up by fab across loaded entries rather than via the device's
+    # config entries: DeviceEntry.config_entries is deprecated (HA 2026.10)
+    # and its replacement config_entry_id does not exist on older releases.
+    for bundle in hass.data.get(DOMAIN, {}).values():
         coordinator = bundle.get("coordinators", {}).get(fab)
         if coordinator is not None:
             return coordinator
@@ -96,7 +95,7 @@ async def _async_dump_dop2_leaf(call: ServiceCall) -> ServiceResponse:
     idx2 = call.data[ATTR_IDX2]
 
     fab = _resolve_fab(hass, device_id)
-    coordinator = _resolve_coordinator(hass, device_id, fab)
+    coordinator = _resolve_coordinator(hass, fab)
 
     resource = build_dop2_resource(fab, unit, attribute, idx1, idx2)
     try:
@@ -130,7 +129,7 @@ async def _async_dump_rest_resource(call: ServiceCall) -> ServiceResponse:
     resource_name = call.data[ATTR_RESOURCE]
 
     fab = _resolve_fab(hass, device_id)
-    coordinator = _resolve_coordinator(hass, device_id, fab)
+    coordinator = _resolve_coordinator(hass, fab)
 
     resource = build_rest_resource(fab, resource_name)
     try:

@@ -132,3 +132,29 @@ def test_rest_resource_schema_rejects_resource_outside_allow_list() -> None:
 def test_rest_resource_schema_accepts_known_resource() -> None:
     result = DUMP_REST_RESOURCE_SCHEMA({ATTR_DEVICE_ID: "abc123", ATTR_RESOURCE: "State"})
     assert result[ATTR_RESOURCE] == "State"
+
+
+# ------------------------------------------------------ coordinator lookup
+def test_resolve_coordinator_finds_fab_across_loaded_entries() -> None:
+    from types import SimpleNamespace
+
+    from custom_components.miele_lan.const import DOMAIN
+    from custom_components.miele_lan.services import _resolve_coordinator
+
+    coord = object()
+    hass = SimpleNamespace(data={DOMAIN: {
+        "entry_a": {"coordinators": {"000000000001": object()}},
+        "entry_b": {"coordinators": {"000000000002": coord}},
+    }})
+    assert _resolve_coordinator(hass, "000000000002") is coord
+
+
+def test_resolve_coordinator_raises_when_fab_not_loaded() -> None:
+    from types import SimpleNamespace
+
+    from homeassistant.exceptions import HomeAssistantError
+
+    from custom_components.miele_lan.services import _resolve_coordinator
+
+    with pytest.raises(HomeAssistantError):
+        _resolve_coordinator(SimpleNamespace(data={}), "000000000002")
