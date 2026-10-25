@@ -406,18 +406,21 @@ class MieleLanCoordinator(DataUpdateCoordinator[MieleLanData]):
 
         - A 403/404 is a genuine "this firmware doesn't expose this leaf"
           signal → latch off, never retry.
-        - A 500 is usually the XKM being asleep (observed on a G7655 /
-          FW 09.14: it answers 500 with an **empty body** to every DOP2
-          read in that state, while /Ident still answers 200). But a 500
-          does not *mean* asleep: PR review on #16 / G7310 (FW 04.05)
-          showed units that answer 500 {"Error": 20660} or {"Error":
-          28701} on unrelated leaves while awake, every time — and time
-          out on 2/1585 after 10 s while awake. So the 500-path is
-          transient (one wake-and-retry round per poll cycle, same
-          pattern as set_power / issue #54) but *bounded*: if 3
-          consecutive poll cycles end without a 200 (500 after wake, or
-          a fetch failure/timeout), the leaf is latched unsupported just
-          like a 403/404. Any 200 resets the counter.
+        - A 500 is usually the XKM being asleep (observed on a G7655,
+          XKM EK057S / FW 09.14: it answers 500 with an **empty body**
+          to every DOP2 read in that state, while /Ident still answers
+          200 — confirmed against XKMIdentLabel in /Ident). But a 500
+          does not *mean* asleep: other EK037-class units (issue #16,
+          FW 04.05) answer 500 {"Error": 20660} or 28701 on unrelated
+          leaves while awake, every time — and time out on 2/1585.
+          So the 500-path is transient (one wake-and-retry round per
+          poll cycle) but *bounded*: if 3 consecutive poll cycles end
+          without a 200 (500 after wake, or a fetch failure/timeout),
+          the leaf is latched unsupported just like a 403/404. Any 200
+          resets the counter.
+        - A latch (403/404, or 3 misses) also clears the cached
+          device_context so device-context consumers see empty data
+          (entities go `unknown`) instead of frozen stale levels.
         """
         if self._device_context_unsupported:
             return
@@ -433,6 +436,9 @@ class MieleLanCoordinator(DataUpdateCoordinator[MieleLanData]):
             self._device_context_miss_cycles += 1
             if self._device_context_miss_cycles >= DEVICE_CONTEXT_MAX_MISS_CYCLES:
                 self._device_context_unsupported = True
+                # Clear the cached context so consumers report unknown
+                # rather than frozen stale levels until the next reload.
+                self._data.device_context = {}
                 _LOGGER.debug(
                     "[%s] DOP2 2/1585 latched unsupported after %d consecutive "
                     "cycles without a 200 (last: %s)",
@@ -475,6 +481,8 @@ class MieleLanCoordinator(DataUpdateCoordinator[MieleLanData]):
             return
         if st in (403, 404):
             self._device_context_unsupported = True
+            # Same reason as the miss-latch above: stale data out.
+            self._data.device_context = {}
             _LOGGER.debug(
                 "[%s] DOP2 2/1585 returned %d — disabling device-context reads on this device",
                 self.fab, st,

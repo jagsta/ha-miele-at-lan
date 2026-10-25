@@ -139,6 +139,33 @@ def test_miss_cycles_latch_after_three_without_200() -> None:
     assert coord._device_context_unsupported is True
 
 
+def test_miss_latch_clears_cached_device_context() -> None:
+    """Latch must not leave frozen stale levels behind (review note)."""
+    coord = _make_coordinator([200], MieleAppliance.DISHWASHER)
+    coord.client.set_statuses([200])
+    asyncio.run(_run(coord))
+    assert coord._data.device_context.get("salt_percent") == 77
+    # Already 2 seeded misses; one more miss cycle latches + clears.
+    coord._device_context_miss_cycles = 2
+    coord.client.set_statuses([500, 500])
+    _reset_throttle(coord)
+    asyncio.run(_run(coord))
+    assert coord._device_context_unsupported is True
+    assert coord._data.device_context == {}
+
+
+def test_404_latch_clears_cached_device_context() -> None:
+    coord = _make_coordinator([200], MieleAppliance.DISHWASHER)
+    coord.client.set_statuses([200])
+    asyncio.run(_run(coord))
+    assert coord._data.device_context
+    coord.client.set_statuses([404])
+    _reset_throttle(coord)
+    asyncio.run(_run(coord))
+    assert coord._device_context_unsupported is True
+    assert coord._data.device_context == {}
+
+
 def test_first_and_second_miss_never_latch() -> None:
     coord = _make_coordinator([500], MieleAppliance.DISHWASHER)
     coord.client.set_statuses([500, 500])

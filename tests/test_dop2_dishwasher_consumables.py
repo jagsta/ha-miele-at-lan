@@ -1,6 +1,6 @@
 """Dishwasher consumable sensors — G7655 DOP2 2/1585 fixture regressions.
 
-Fixture captured live from a G7655 (EK037, protocolVersion 4) via
+Fixture captured live from a G7655 (XKM EK057S, FW 09.14, protocolVersion 4) via
 `miele_lan.dump_dop2_leaf` while the Miele cloud integration reported
 PowerDisk 72 %, salt 77 %, rinse aid 89 % for the same machine.
 """
