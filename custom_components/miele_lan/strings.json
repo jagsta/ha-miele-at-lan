@@ -1048,6 +1048,15 @@
           "no_program_available": "No program available"
         }
       },
+      "autodos_level": {
+        "name": "AutoDos PowerDisk fill level"
+      },
+      "salt_level": {
+        "name": "Salt level"
+      },
+      "rinse_aid_level": {
+        "name": "Rinse aid level"
+      },
       "push_mode": {
         "name": "Push status",
         "state": {

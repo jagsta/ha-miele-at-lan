@@ -273,6 +273,18 @@ def parse_global_device_context(payload: bytes) -> dict[str, Any]:
         "prog": prog,
         "device_attributes_dwtdwm": device_attributes,
         "dos_containers": dos_containers,
+        # DW-and-TDW-M (dishwasher family) consumable levels, from
+        # GLOBAL_DeviceAttributesDWTDWM fields 8/9 — see the verification
+        # note in sensor.py::_consumable_percent (verified live on a
+        # G7655 against the Miele cloud API, issue #15).
+        "salt_percent": (
+            device_attributes.get(8, (None, None))[1]
+            if device_attributes else None
+        ),
+        "rinse_aid_percent": (
+            device_attributes.get(9, (None, None))[1]
+            if device_attributes else None
+        ),
         "wash2dry_state": (
             _WASH2DRY_LABELS.get(wash2dry_raw) if wash2dry_raw is not None else None
         ),

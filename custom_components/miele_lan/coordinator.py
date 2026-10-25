@@ -26,6 +26,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .api import MieleLanClient
 from .const import (
     DOMAIN,
+    DISHWASHER_FAMILY,
     HOB_FAMILY,
     LAUNDRY_FAMILY,
     OVEN_FAMILY,
@@ -48,6 +49,11 @@ WLAN_REFRESH_INTERVAL = 300  # seconds — RSSI/signal-percentage drift slowly;
                              # 5-minute cadence keeps values roughly current.
 DEVICE_CONTEXT_REFRESH_INTERVAL = 600  # seconds — TwinDos fill level and wash2dry
                                        # state evolve on a per-cycle timescale.
+DEVICE_CONTEXT_MAX_MISS_CYCLES = 3  # consecutive poll cycles allowed to end
+                                    # without a 200 (500 after wake, or a
+                                    # fetch failure) before the leaf is
+                                    # latched unsupported — see
+                                    # _maybe_refresh_device_context.
 HOOD_FILTER_REFRESH_INTERVAL = 3600  # seconds — grease/charcoal filter saturation
                                      # creeps up over weeks, so hourly is ample.
 IDENT_MAX_ATTEMPTS = 5  # /Ident is fetched once; these are the retries allowed
@@ -117,6 +123,7 @@ class MieleLanCoordinator(DataUpdateCoordinator[MieleLanData]):
         self._wlan_last_fetch: float = float("-inf")
         self._device_context_last_fetch: float = float("-inf")
         self._device_context_unsupported: bool = False
+        self._device_context_miss_cycles: int = 0
         self._hood_filters_last_fetch: float = float("-inf")
         self._hood_filters_unsupported: bool = False
         self._last_push_at: float | None = None
@@ -410,36 +417,110 @@ class MieleLanCoordinator(DataUpdateCoordinator[MieleLanData]):
     async def _maybe_refresh_device_context(self) -> None:
         """Refresh GLOBAL_DeviceContext (DOP2 2/1585) for laundry-family devices.
 
-        Carries TwinDos fill-level and dosage, plus Wash2DryState. Only
-        available at HAN tier on devices whose firmware routes DOP2 unit 2
-        (e.g. WTW870). On devices that don't expose it (TWC660WP, EK057 FW
-        08.32) the first 404/403 latches the unsupported flag so we never
-        retry.
+        Carries TwinDos fill-level and dosage plus Wash2DryState (laundry),
+        and the dishwasher's consumables: AutoDos PowerDisk cartridge,
+        salt %, and rinse aid % (fields 8/9 of
+        GLOBAL_DeviceAttributesDWTDWM — verified live on a G7655 against
+        the values the Miele cloud API reports for the same machine).
+
+        Only available at HAN tier on devices whose firmware routes DOP2
+        unit 2. Unsupportedness and sleep are two different things here:
+
+        - A 403/404 is a genuine "this firmware doesn't expose this leaf"
+          signal → latch off, never retry.
+        - A 500 is usually the XKM being asleep (observed on a G7655,
+          XKM EK057S / FW 09.14: it answers 500 with an **empty body**
+          to every DOP2 read in that state, while /Ident still answers
+          200 — confirmed against XKMIdentLabel in /Ident). But a 500
+          does not *mean* asleep: other EK037-class units (issue #16,
+          FW 04.05) answer 500 {"Error": 20660} or 28701 on unrelated
+          leaves while awake, every time — and time out on 2/1585.
+          So the 500-path is transient (one wake-and-retry round per
+          poll cycle) but *bounded*: if 3 consecutive poll cycles end
+          without a 200 (500 after wake, or a fetch failure/timeout),
+          the leaf is latched unsupported just like a 403/404. Any 200
+          resets the counter.
+        - A latch (403/404, or 3 misses) also clears the cached
+          device_context so device-context consumers see empty data
+          (entities go `unknown`) instead of frozen stale levels.
         """
         if self._device_context_unsupported:
             return
-        if self.device_type not in LAUNDRY_FAMILY:
+        if self.device_type not in (*LAUNDRY_FAMILY, *DISHWASHER_FAMILY):
             return
         now = time.monotonic()
         if now - self._device_context_last_fetch < DEVICE_CONTEXT_REFRESH_INTERVAL:
             return
         self._device_context_last_fetch = now
+
+        def _miss(context: str) -> None:
+            """Count a cycle that ended without a 200 and latch at the bound."""
+            self._device_context_miss_cycles += 1
+            if self._device_context_miss_cycles >= DEVICE_CONTEXT_MAX_MISS_CYCLES:
+                self._device_context_unsupported = True
+                # Clear the cached context so consumers report unknown
+                # rather than frozen stale levels until the next reload.
+                self._data.device_context = {}
+                _LOGGER.debug(
+                    "[%s] DOP2 2/1585 latched unsupported after %d consecutive "
+                    "cycles without a 200 (last: %s)",
+                    self.fab, self._device_context_miss_cycles, context,
+                )
+            else:
+                _LOGGER.debug(
+                    "[%s] DOP2 2/1585 %s — miss %d/%d before latching unsupported",
+                    self.fab, context, self._device_context_miss_cycles,
+                    DEVICE_CONTEXT_MAX_MISS_CYCLES,
+                )
+
         try:
             st, body = await self.client.raw._request_bytes(
                 "GET",
                 f"/Devices/{self.fab}/DOP2/2/1585?idx1=0&idx2=0",
-                allowed_status=(200, 403, 404),
+                allowed_status=(200, 403, 404, 500),
             )
+            if st == 500:
+                # Sleeping XKM — wake it, give it the same ~3s the app
+                # allows, and retry once before the next poll cycle.
+                try:
+                    await self.client.wake()
+                except Exception as err:  # noqa: BLE001
+                    _LOGGER.debug(
+                        "[%s] DOP2 2/1585 got 500 (asleep), wake failed: %s",
+                        self.fab, err,
+                    )
+                    _miss("500, wake failed")
+                    return
+                await asyncio.sleep(3)
+                st, body = await self.client.raw._request_bytes(
+                    "GET",
+                    f"/Devices/{self.fab}/DOP2/2/1585?idx1=0&idx2=0",
+                    allowed_status=(200, 403, 404, 500),
+                )
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("[%s] DOP2 2/1585 fetch failed: %s", self.fab, err)
+            _miss(f"fetch failed ({type(err).__name__})")
             return
-        if st != 200:
+        if st in (403, 404):
             self._device_context_unsupported = True
+            # Same reason as the miss-latch above: stale data out.
+            self._data.device_context = {}
             _LOGGER.debug(
                 "[%s] DOP2 2/1585 returned %d — disabling device-context reads on this device",
                 self.fab, st,
             )
             return
+        if st != 200:
+            # Still 500 after the wake-and-retry (or a 500 from a unit that
+            # answers 500 while awake). Transient but bounded: after
+            # DEVICE_CONTEXT_MAX_MISS_CYCLES consecutive misses the leaf is
+            # latched unsupported so we stop waking a machine that won't
+            # cooperate (review note on #16/G7310: FW 04.05 answers 500 on
+            # unrelated DOP2 reads every time while awake, and 2/1585 times
+            # out — this bound keeps that from blocking the connection).
+            _miss(f"HTTP {st} after wake")
+            return
+        self._device_context_miss_cycles = 0
         try:
             self._data.device_context = parse_global_device_context(body)
         except Exception as err:  # noqa: BLE001

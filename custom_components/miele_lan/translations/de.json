@@ -1048,6 +1048,15 @@
           "no_program_available": "Kein Programm verfügbar"
         }
       },
+      "autodos_level": {
+        "name": "AutoDos PowerDisk Füllstand"
+      },
+      "salt_level": {
+        "name": "Salzfüllstand"
+      },
+      "rinse_aid_level": {
+        "name": "Klarspülerfüllstand"
+      },
       "push_mode": {
         "name": "Push-Status",
         "state": {
