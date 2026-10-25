@@ -285,6 +285,13 @@ def parse_global_device_context(payload: bytes) -> dict[str, Any]:
             device_attributes.get(9, (None, None))[1]
             if device_attributes else None
         ),
+        # GLOBAL_EnumDoorState: 0 unknown, 1 open, 2 closed, 3 locked,
+        # 4 drying plus. Follows the door on a G7197 whose SignalDoor
+        # never changes (issue #59).
+        "door_state": (
+            device_attributes.get(1, (None, None))[1]
+            if device_attributes else None
+        ),
         "wash2dry_state": (
             _WASH2DRY_LABELS.get(wash2dry_raw) if wash2dry_raw is not None else None
         ),

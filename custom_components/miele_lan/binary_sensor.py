@@ -25,7 +25,7 @@ from .const import (
     WINE_FAMILY,
     MieleAppliance,
 )
-from .coordinator import MieleLanCoordinator
+from .coordinator import MieleLanCoordinator, MieleLanData
 from .entity import MieleLanEntity
 from .extended_state import hob_zone_count, parse_hob_extended_state
 
@@ -33,10 +33,20 @@ ALL_TYPES: tuple[MieleAppliance, ...] = tuple(
     t for t in MieleAppliance if t is not MieleAppliance.UNKNOWN
 )
 
+DOOR_STATE_OPEN = 1  # GLOBAL_EnumDoorState
+
+
+def _door_open(data: MieleLanData) -> bool:
+    # Some dishwashers (G7197) never set SignalDoor over the LAN; their
+    # DOP2 2/1585 DoorState does follow the door (issue #59).
+    return bool(data.state.get("SignalDoor")) or data.door_state == DOOR_STATE_OPEN
+
 
 @dataclass(frozen=True, kw_only=True)
 class MieleLanBinarySensorDescription(BinarySensorEntityDescription):
-    is_on_fn: Callable[[dict[str, Any]], bool | None]
+    is_on_fn: Callable[[dict[str, Any]], bool | None] | None = None
+    # For sensors that need more than /State; takes precedence over is_on_fn.
+    data_is_on_fn: Callable[[MieleLanData], bool | None] | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -93,7 +103,7 @@ BINARY_SENSOR_TYPES: tuple[MieleLanBinarySensorDef, ...] = (
             key="door_open",
             translation_key="door_open",
             device_class=BinarySensorDeviceClass.DOOR,
-            is_on_fn=lambda s: bool(s.get("SignalDoor")),
+            data_is_on_fn=_door_open,
         ),
     ),
     # Failure — every device
@@ -297,8 +307,11 @@ class MieleLanBinarySensor(MieleLanEntity, BinarySensorEntity):
     def is_on(self) -> bool | None:
         if not self.coordinator.data:
             return None
+        description = self.entity_description
         try:
-            return self.entity_description.is_on_fn(self.coordinator.data.state)
+            if description.data_is_on_fn is not None:
+                return description.data_is_on_fn(self.coordinator.data)
+            return description.is_on_fn(self.coordinator.data.state)
         except Exception:  # noqa: BLE001
             return None
 

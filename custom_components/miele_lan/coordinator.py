@@ -84,6 +84,9 @@ class MieleLanData:
     wlan: dict[str, Any] = field(default_factory=dict)
     dop2: dict[str, Any] = field(default_factory=dict)
     device_context: dict[str, Any] = field(default_factory=dict)
+    # 2/1585 DoorState read during the latest poll, None if that poll did not
+    # read it — a value from before the appliance fell asleep must not linger.
+    door_state: int | None = None
 
 
 class MieleLanCoordinator(DataUpdateCoordinator[MieleLanData]):
@@ -124,6 +127,7 @@ class MieleLanCoordinator(DataUpdateCoordinator[MieleLanData]):
         self._device_context_last_fetch: float = float("-inf")
         self._device_context_unsupported: bool = False
         self._device_context_miss_cycles: int = 0
+        self._device_context_answered = False
         self._hood_filters_last_fetch: float = float("-inf")
         self._hood_filters_unsupported: bool = False
         self._last_push_at: float | None = None
@@ -444,12 +448,19 @@ class MieleLanCoordinator(DataUpdateCoordinator[MieleLanData]):
           device_context so device-context consumers see empty data
           (entities go `unknown`) instead of frozen stale levels.
         """
+        self._data.door_state = None
         if self._device_context_unsupported:
             return
         if self.device_type not in (*LAUNDRY_FAMILY, *DISHWASHER_FAMILY):
             return
         now = time.monotonic()
         if now - self._device_context_last_fetch < DEVICE_CONTEXT_REFRESH_INTERVAL:
+            # The door needs poll cadence, not the 10-minute one (#59). Only
+            # once the leaf has answered, so a unit that times out on it is
+            # not stalled every poll; never wakes and never counts a miss,
+            # so a dishwasher sleeping through a few polls is not latched.
+            if self._device_context_answered and self.device_type in DISHWASHER_FAMILY:
+                await self._quick_refresh_device_context()
             return
         self._device_context_last_fetch = now
 
@@ -521,10 +532,32 @@ class MieleLanCoordinator(DataUpdateCoordinator[MieleLanData]):
             _miss(f"HTTP {st} after wake")
             return
         self._device_context_miss_cycles = 0
+        self._store_device_context(body)
+
+    async def _quick_refresh_device_context(self) -> None:
+        """Plain 2/1585 read between full refreshes: no wake, no latch."""
+        try:
+            st, body = await self.client.raw._request_bytes(
+                "GET",
+                f"/Devices/{self.fab}/DOP2/2/1585?idx1=0&idx2=0",
+                allowed_status=(200, 403, 404, 500),
+            )
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("[%s] DOP2 2/1585 quick read failed: %s", self.fab, err)
+            return
+        if st != 200:
+            _LOGGER.debug("[%s] DOP2 2/1585 quick read returned %d", self.fab, st)
+            return
+        self._store_device_context(body)
+
+    def _store_device_context(self, body: bytes) -> None:
+        self._device_context_answered = True
         try:
             self._data.device_context = parse_global_device_context(body)
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("[%s] DOP2 2/1585 parse failed: %s", self.fab, err)
+            return
+        self._data.door_state = self._data.device_context.get("door_state")
 
     async def _maybe_refresh_hood_filters(self) -> None:
         """Read the hood's grease/charcoal filter saturation grades.
