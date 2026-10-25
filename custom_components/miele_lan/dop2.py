@@ -30,7 +30,7 @@ the RootNode encoding in akappner/dop2rs:
 
     Nested/container type codes:
         0x10 MStruct   — u16 field_count, then field_count × (u16 idx, u8 type, value)
-        0x17 ArrayE16  — u16 element_count, then element_count × u16
+        0x11-0x1d arrays — u16 element_count, then the elements (see _ARRAY_TYPES)
         0x20 MString   — u16 byte_length, then byte_length bytes UTF-8
         0x21 AStruct   — u16 element_count, then element_count × (u16 field_count, fields...)
 """
@@ -63,6 +63,24 @@ _FIXED_SIZE_TYPES: dict[int, tuple[int, str]] = {
     0x0b: (8, ">Q"),   # U64
     0x0c: (8, ">q"),   # I64
     0x0d: (8, ">Q"),   # E64
+}
+
+# Arrays: u16 element count, then the elements. Codes follow dop2rs
+# Dop2Payloads; ArrayI64 and the float arrays are left out because their
+# element size is not settled there.
+_ARRAY_TYPES: dict[int, tuple[int, str]] = {
+    0x11: (1, ">?"),   # ArrayBool
+    0x12: (1, ">B"),   # ArrayU8
+    0x13: (1, ">b"),   # ArrayI8
+    0x14: (1, ">B"),   # ArrayE8
+    0x15: (2, ">H"),   # ArrayU16
+    0x16: (2, ">h"),   # ArrayI16
+    0x17: (2, ">H"),   # ArrayE16
+    0x18: (4, ">I"),   # ArrayU32
+    0x19: (4, ">i"),   # ArrayI32
+    0x1a: (4, ">I"),   # ArrayE32
+    0x1b: (8, ">Q"),   # ArrayU64
+    0x1d: (8, ">Q"),   # ArrayE64
 }
 
 
@@ -108,8 +126,8 @@ def _walk_fields(buf: bytes, off: int, count: int) -> tuple[dict[int, tuple[int,
 
     field_dict maps field_index → (type_tag, decoded_value).
     Decoded value for MStruct is a nested dict; for AStruct a list of dicts;
-    for ArrayE16 a list of ints; for MString a str; for scalars an int/bool.
-    Unknown type tags are stored with value None and iteration continues.
+    for arrays a list; for MString a str; for scalars an int/bool.
+    An unknown type tag is stored with value None and ends the walk.
     """
     result: dict[int, tuple[int, Any]] = {}
     for _ in range(count):
@@ -150,17 +168,16 @@ def _walk_fields(buf: bytes, off: int, count: int) -> tuple[dict[int, tuple[int,
                 elems.append(elem_dict)
             result[idx] = (t, elems)
 
-        elif t == 0x17:  # ArrayE16
+        elif t in _ARRAY_TYPES:
             if off + 2 > len(buf):
                 break
             arr_len = struct.unpack_from(">H", buf, off)[0]
             off += 2
-            arr: list[int] = []
-            for _ in range(arr_len):
-                if off + 2 > len(buf):
-                    break
-                arr.append(struct.unpack_from(">H", buf, off)[0])
-                off += 2
+            sz, fmt = _ARRAY_TYPES[t]
+            if off + arr_len * sz > len(buf):
+                break
+            arr = [struct.unpack_from(fmt, buf, off + i * sz)[0] for i in range(arr_len)]
+            off += arr_len * sz
             result[idx] = (t, arr)
 
         elif t == 0x20:  # MString
@@ -173,7 +190,10 @@ def _walk_fields(buf: bytes, off: int, count: int) -> tuple[dict[int, tuple[int,
             result[idx] = (t, s)
 
         else:
+            # The size of an unknown type is unknown too: stop rather than
+            # read the following bytes at a wrong offset.
             result[idx] = (t, None)
+            break
 
     return result, off
 
