@@ -844,11 +844,6 @@ def _dos_container_value(
     return c.get(key)
 
 
-def _dwtdwm_lifetime(ctx: dict[str, Any], key: str) -> Any:
-    """Lifetime eco-feedback total; None when the appliance doesn't publish it."""
-    return ctx.get(key)
-
-
 def _consumable_percent(ctx: dict[str, Any], key: str) -> Any:
     """Dishwasher salt / rinse-aid level from GLOBAL_DeviceAttributesDWTDWM.
 
@@ -960,11 +955,13 @@ DEVICE_CONTEXT_SENSORS: tuple[MieleLanDeviceContextSensorDef, ...] = (
             key="lifetime_energy",
             translation_key="lifetime_energy",
             native_unit_of_measurement=UnitOfEnergy.WATT_HOUR,
+            suggested_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+            suggested_display_precision=1,
             device_class=SensorDeviceClass.ENERGY,
             state_class=SensorStateClass.TOTAL_INCREASING,
             entity_category=EntityCategory.DIAGNOSTIC,
             container_index=None,
-            value_fn=lambda ctx: _dwtdwm_lifetime(ctx, "lifetime_energy_wh"),
+            value_fn=lambda ctx: ctx.get("lifetime_energy_wh"),
         ),
     ),
     MieleLanDeviceContextSensorDef(
@@ -973,11 +970,11 @@ DEVICE_CONTEXT_SENSORS: tuple[MieleLanDeviceContextSensorDef, ...] = (
             key="lifetime_water",
             translation_key="lifetime_water",
             native_unit_of_measurement=UnitOfVolume.LITERS,
-            device_class=SensorDeviceClass.VOLUME,
+            device_class=SensorDeviceClass.WATER,
             state_class=SensorStateClass.TOTAL_INCREASING,
             entity_category=EntityCategory.DIAGNOSTIC,
             container_index=None,
-            value_fn=lambda ctx: _dwtdwm_lifetime(ctx, "lifetime_water_l"),
+            value_fn=lambda ctx: ctx.get("lifetime_water_l"),
         ),
     ),
 )

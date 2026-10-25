@@ -247,18 +247,23 @@ def _decode_dos_container(c: dict[int, tuple[int, Any]]) -> dict[str, Any]:
 
 
 def _lifetime_total(
-    device_attributes: dict[int, tuple[int, Any]] | None, attr: int
+    device_attributes: dict[int, tuple[int, Any]] | None, attr: int, int_type: int
 ) -> int | None:
-    """Accumulated eco-feedback total from a DWTDWM sub-struct attr (5=Wh, 6=L).
+    """Accumulated total from DWTDWM attrs 5/6 (GLOBAL_GenericParameterValueU32).
 
-    The attribute is an MStruct; field 4 carries the lifetime total when the
-    leaf exposes it. Returns None when the device doesn't publish it.
+    Field 4 is CurrentValue; field 6 must carry the expected IntType
+    (121 GLOBAL_VALINT_ENERGY_WH / 44 GLOBAL_VALINT_ECO_WATER_LITER) —
+    None otherwise, so a model reporting a different unit (e.g. 45
+    GLOBAL_VALINT_ECO_ENERGY_KWH) is never misread.
     """
     if not device_attributes:
         return None
     m = device_attributes.get(attr)
     if m and isinstance(m[1], dict):
-        total = m[1].get(4, (None, None))[1]
+        sub = m[1]
+        if sub.get(6, (None, None))[1] != int_type:
+            return None
+        total = sub.get(4, (None, None))[1]
         if isinstance(total, int):
             return total
     return None
@@ -330,17 +335,10 @@ def parse_global_device_context(payload: bytes) -> dict[str, Any]:
             device_attributes.get(1, (None, None))[1]
             if device_attributes else None
         ),
-        # Lifetime eco-feedback totals (DWTDWM attrs 5/6, each a sub-struct:
-        # field 1 = interpretation enum 8, field 4 = the accumulated total —
-        # field 2/3 carry per-program splits which stay 0 here). Verified
-        # live on the G7655: 182.6 kWh / 2447 L on 2026-10-03 and
-        # 197.2 kWh / 2643 L on 2026-10-24, vs the Miele cloud's own
-        # lifetime usage page ~182.6/~193.4 kWh and ~2447/~2494 L at those
-        # dates — the module's counter tracks the cloud but the two systems'
-        # accounting differs by a few percent (per-run completion vs
-        # per-phase accrual), so these are the appliance's own totals.
-        "lifetime_energy_wh": _lifetime_total(device_attributes, 5),
-        "lifetime_water_l": _lifetime_total(device_attributes, 6),
+        # GLOBAL_GenericParameterValueU32 with IntType field 6 =
+        # 121 (GLOBAL_VALINT_ENERGY_WH) / 44 (GLOBAL_VALINT_ECO_WATER_LITER).
+        "lifetime_energy_wh": _lifetime_total(device_attributes, 5, 121),
+        "lifetime_water_l": _lifetime_total(device_attributes, 6, 44),
         "wash2dry_state": (
             _WASH2DRY_LABELS.get(wash2dry_raw) if wash2dry_raw is not None else None
         ),
