@@ -65,13 +65,13 @@ def _make_coordinator(statuses: list[int], device_type: MieleAppliance) -> Any:
     coord._data = coordinator_mod.MieleLanData()
     coord._data.ident = {"device_type": int(device_type)}
     coord._device_context_unsupported = False
-    coord._device_context_last_fetch = 0.0
+    coord._device_context_last_fetch = float("-inf")  # fresh runners: monotonic() starts ~0
     coord._device_context_miss_cycles = 0
     return coord
 
 
 def _reset_throttle(coord: Any) -> None:
-    coord._device_context_last_fetch = 0.0
+    coord._device_context_last_fetch = float("-inf")  # fresh runners: monotonic() starts ~0
 
 
 @pytest.fixture(autouse=True)

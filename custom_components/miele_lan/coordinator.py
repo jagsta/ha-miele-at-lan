@@ -61,6 +61,7 @@ IDENT_MAX_ATTEMPTS = 5  # /Ident is fetched once; these are the retries allowed
 IDENT_SETUP_RETRY_ATTEMPTS = 3  # bounded retries given to /Ident before platform
                                 # setup forwards entities — see async_ensure_ident_ready.
 IDENT_SETUP_RETRY_DELAY = 1.0  # seconds between those retries.
+POLL_FAILURE_TOLERANCE = 2  # consecutive failed polls tolerated before UpdateFailed
 
 
 def _describe_update_error(err: Exception) -> str:
@@ -115,16 +116,20 @@ class MieleLanCoordinator(DataUpdateCoordinator[MieleLanData]):
         self._ident_loaded = False
         self._ident_attempts = 0
         self._ident_setup_attempts = 0
-        self._dop2_last_fetch: float = 0.0
+        # -inf, not 0.0: time.monotonic() counts from boot on Linux, so on a
+        # freshly booted host 0.0 would throttle the first read of each leaf.
+        self._dop2_last_fetch: float = float("-inf")
         self._hours_unsupported = False
-        self._wlan_last_fetch: float = 0.0
-        self._device_context_last_fetch: float = 0.0
+        self._wlan_last_fetch: float = float("-inf")
+        self._device_context_last_fetch: float = float("-inf")
         self._device_context_unsupported: bool = False
         self._device_context_miss_cycles: int = 0
-        self._hood_filters_last_fetch: float = 0.0
+        self._hood_filters_last_fetch: float = float("-inf")
         self._hood_filters_unsupported: bool = False
         self._last_push_at: float | None = None
         self._push_count = 0
+        self._consecutive_poll_failures = 0
+        self._poll_ever_succeeded = False
 
     # ------------------------------------------------------------- identity
     @property
@@ -308,7 +313,24 @@ class MieleLanCoordinator(DataUpdateCoordinator[MieleLanData]):
             await self._maybe_refresh_device_context()
             await self._maybe_refresh_hood_filters()
         except Exception as err:  # noqa: BLE001
+            self._consecutive_poll_failures += 1
+            # Never-succeeded appliances raise immediately so first refresh
+            # still maps to ConfigEntryNotReady.
+            if (
+                self._consecutive_poll_failures <= POLL_FAILURE_TOLERANCE
+                and self._poll_ever_succeeded
+            ):
+                _LOGGER.warning(
+                    "[%s] poll failed (%d/%d tolerated): %s — keeping last-known state",
+                    self.fab,
+                    self._consecutive_poll_failures,
+                    POLL_FAILURE_TOLERANCE,
+                    _describe_update_error(err),
+                )
+                return self._data
             raise UpdateFailed(_describe_update_error(err)) from err
+        self._consecutive_poll_failures = 0
+        self._poll_ever_succeeded = True
         self._apply_adaptive_poll_interval()
         return self._data
 
