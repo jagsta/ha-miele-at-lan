@@ -1,10 +1,6 @@
 {
   "domain": "miele_lan",
   "name": "Miele@LAN",
-  "categories": [
-    "appliances_cleaning",
-    "climate.fans_ventilation"
-  ],
   "codeowners": [
     "@tiehfood"
   ],
