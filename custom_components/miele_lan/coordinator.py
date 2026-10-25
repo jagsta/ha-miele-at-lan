@@ -110,12 +110,14 @@ class MieleLanCoordinator(DataUpdateCoordinator[MieleLanData]):
         self._ident_loaded = False
         self._ident_attempts = 0
         self._ident_setup_attempts = 0
-        self._dop2_last_fetch: float = 0.0
+        # -inf, not 0.0: time.monotonic() counts from boot on Linux, so on a
+        # freshly booted host 0.0 would throttle the first read of each leaf.
+        self._dop2_last_fetch: float = float("-inf")
         self._hours_unsupported = False
-        self._wlan_last_fetch: float = 0.0
-        self._device_context_last_fetch: float = 0.0
+        self._wlan_last_fetch: float = float("-inf")
+        self._device_context_last_fetch: float = float("-inf")
         self._device_context_unsupported: bool = False
-        self._hood_filters_last_fetch: float = 0.0
+        self._hood_filters_last_fetch: float = float("-inf")
         self._hood_filters_unsupported: bool = False
         self._last_push_at: float | None = None
         self._push_count = 0
